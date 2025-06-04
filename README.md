@@ -8,3 +8,5 @@ Codes for [Dynamic Network Pruning with Interpretable Layerwise Channel Selectio
 - main.py: train dynamic models with decision units
 - finetune.py: pruning models based on dynamic pruning method
 
+## Supplement
+-Sankey diagram
