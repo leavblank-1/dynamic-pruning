@@ -64,21 +64,41 @@ class DecisionHead(nn.Module):
         out = self.avgpool(self.relu(x))
         out = out.view(x.shape[0], x.shape[1])
         out = self.fc1(out)
-        action_probs = F.softmax(out, dim=1)
+        action_probs = F.softmax(out, dim=1) # 得到概率分布
+
+        # === 核心修改：在任何模式下都记录 action_probs ===
+        # 使用模块实例的ID作为键，确保唯一性，方便分析时按层级提取
+        default_graph.append_tensor(f'action_probs_{id(self)}', action_probs)
+
         if self.deterministic or not self.training:
-            sampled_actions = action_probs.max(1)[1]
+            sampled_actions = action_probs.max(1)[1] # 确定性选择
+
+            # === 核心修改：在确定性模式下也记录 sampled_actions ===
+            default_graph.append_tensor(f'sampled_actions_{id(self)}', sampled_actions)
+
             selected_channels = self.channel_gates[sampled_actions]
         else:
             # 直接使用 self.temperature
             m = RelaxedOneHotCategorical(self.temperature, action_probs)
             actions = m.rsample()
             onehot_actions = torch.zeros(actions.size()).to(x.device)
-            sampled_actions = actions.max(1)[1]
+            
+            sampled_actions = actions.max(1)[1] # Gumbel-softmax 采样后的离散动作
+
+            # === 核心修改：在Gumbel-Softmax模式下也记录 sampled_actions ===
+            default_graph.append_tensor(f'sampled_actions_{id(self)}', sampled_actions)
+
             onehot_actions.scatter_(1, sampled_actions.unsqueeze(1), 1)
             substitute_actions = (onehot_actions - actions).detach() + actions
             selected_channels = torch.mm(substitute_actions, self.channel_gates)
 
+        # === 核心修改：确保 selected_channels 总是被记录（这是桑基图和稀疏度分析的基础）===
+        # 注意：这里是将所有DecisionHead的selected_channels放到一个公共的列表中
+        default_graph.append_tensor('selected_channels', selected_channels) 
+
         return sampled_actions, selected_channels
+
+
 
 
 def apply_func(model, module_type, func, **kwargs):
