@@ -69,9 +69,7 @@ elif args.dataset == 'cifar100':
 
 print('==> Initializing model...')
 model = models.__dict__['cifar_' + args.arch](args.num_classes)
-model_params = []
-for p in model.parameters():
-    model_params.append(p)
+
 
 print('==> Loading pretrained model...')
 pretrained_model_path = 'logs/pretrained/%s/%s/checkpoint.pth' % (args.dataset, args.arch)
@@ -85,7 +83,11 @@ if not os.path.exists(pretrained_model_path):
         raise FileNotFoundError(f"Pretrained model not found at {pretrained_model_path} or its .tar version.")
 else:
     model.load_state_dict(torch.load(pretrained_model_path))
-
+    
+model_params = []
+for p in model.parameters():
+    model_params.append(p)
+    
 if args.arch in ['resnet20', 'resnet56']:
     from decision import init_decision_basicblock, decision_basicblock_forward
     init_func = init_decision_basicblock
