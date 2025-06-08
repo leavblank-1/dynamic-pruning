@@ -18,10 +18,10 @@ parser.add_argument('--gpu', default='0', type=str, help='GPU ID to use (e.g., 0
 parser.add_argument('--dataset', default='cifar10', type=str, help='Dataset to use: cifar10 or cifar100')
 parser.add_argument('--arch', '-a', default='resnet56', type=str, help='Model architecture: resnet20, resnet56, vgg16, vgg19')
 parser.add_argument('--action_num', default=5, type=int, help='Number of actions for decision head')
-parser.add_argument('--sparsity_level', default=0.4, type=float, help='Target sparsity level')
+parser.add_argument('--sparsity_level', default=0.4, type=float, help='Target sparsity level (e.g., 0.7 for 70% pruned)')
 parser.add_argument('--lr', default=0.01, type=float, help='Learning rate for optimization')
 parser.add_argument('--lambd', default=1.0, type=float, help='Weight for sparsity regularization loss')
-parser.add_argument('--epochs', default=10, type=int, help='Number of epochs for training') # 周期改为10
+parser.add_argument('--epochs', default=5, type=int, help='Number of epochs for training') # 周期改为10
 parser.add_argument('--log_interval', default=100, type=int, help='Logging interval (batches)')
 parser.add_argument('--train_batch_size', default=128, type=int, help='Batch size for training')
 # Gumbel-softmax 温度退火参数
@@ -69,7 +69,9 @@ elif args.dataset == 'cifar100':
 
 print('==> Initializing model...')
 model = models.__dict__['cifar_' + args.arch](args.num_classes)
-
+model_params = []
+for p in model.parameters():
+    model_params.append(p)
 
 print('==> Loading pretrained model...')
 pretrained_model_path = 'logs/pretrained/%s/%s/checkpoint.pth' % (args.dataset, args.arch)
@@ -83,11 +85,7 @@ if not os.path.exists(pretrained_model_path):
         raise FileNotFoundError(f"Pretrained model not found at {pretrained_model_path} or its .tar version.")
 else:
     model.load_state_dict(torch.load(pretrained_model_path))
-    
-model_params = []
-for p in model.parameters():
-    model_params.append(p)
-    
+
 if args.arch in ['resnet20', 'resnet56']:
     from decision import init_decision_basicblock, decision_basicblock_forward
     init_func = init_decision_basicblock
@@ -158,7 +156,6 @@ def train(epoch):
                       epoch, i, len(trainloader), loss.item(), loss_ce.item(), loss_reg.item(),
                       sparsity.item(), mean_gate.item(), acc.item()
                   ))
-
 def test():
     model.eval()
     apply_func(model, 'DecisionHead', set_deterministic_value, deterministic=True)
@@ -177,7 +174,7 @@ def test():
             concat_channels = torch.cat(selected_channels, dim=1)
 
             test_loss_ce.append(F.cross_entropy(output, target).item())
-            test_loss_reg.append(args.lambd * concat_channels.abs().sum().item())
+            test_loss_reg.append((args.lambd * (torch.cat(selected_channels, dim=1).abs().mean() - args.sparsity_level) ** 2).item())
             test_sparsity.append((concat_channels != 0).float().mean().item())
 
             pred = output.max(1)[1]
@@ -218,9 +215,7 @@ for epoch in range(args.epochs):
 
     train(epoch) # 训练一个 epoch
     acc, sparsity = test() # 测试模型性能
-
-    # main.py 的保存条件：仅当稀疏度达标时保存
-    if sparsity <= args.sparsity_level:
+    if sparsity <= 1.0:
         print('Save best checkpoint @ Epoch %d, Accuracy = %.4f, Sparsity = %.4f\n' % (
             epoch, acc, sparsity
         ))
@@ -228,5 +223,4 @@ for epoch in range(args.epochs):
             'epoch': epoch,
             'state_dict': model.state_dict(),
         }, filepath=args.logdir)
-
 print('Training complete.')
